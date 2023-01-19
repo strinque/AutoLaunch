@@ -25,7 +25,7 @@ using json = nlohmann::ordered_json;
 ==============================================*/
 // program version
 const std::string PROGRAM_NAME = "AutoLaunch";
-const std::string PROGRAM_VERSION = "1.2";
+const std::string PROGRAM_VERSION = "1.3";
 
 // default length in characters to align status 
 constexpr std::size_t g_status_len = 80;
@@ -47,7 +47,7 @@ auto add_tag = [](const fmt::color color, const std::string& text) {
 // execute a sequence of actions with tags
 void exec(const std::string& str, std::function<void()> fct)
 {
-  fmt::print(fmt::emphasis::bold, "{:<" + std::to_string(g_status_len) + "}", str + ":");
+  fmt::print(fmt::emphasis::bold, "{:<" + std::to_string(g_status_len) + "}", str + ": ");
   try
   {
     fct();
@@ -196,20 +196,20 @@ std::pair<json, std::map<std::string, std::string>> parse_json(const std::filesy
   // parse json file
   std::ifstream file(path);
   if (!file.good())
-    throw std::runtime_error(fmt::format("can't open file: \"{}\"", path.filename().string()));
+    throw std::runtime_error(fmt::format("can't open file: \"{}\"", path.filename().u8string()));
   json db = json::parse(file);
 
   // check json format
   if(!db.contains("description") ||
      !db.contains("variables") ||
      !db.contains("tasks"))
-    throw std::runtime_error(fmt::format("invalid tasks file format: \"{}\"", path.filename().string()));
+    throw std::runtime_error(fmt::format("invalid tasks file format: \"{}\"", path.filename().u8string()));
   for (const auto& t : db["tasks"])
   {
     if (!t.contains("description") ||
         !t.contains("cmd") ||
         !t.contains("args"))
-      throw std::runtime_error(fmt::format("invalid tasks file format: \"{}\"", path.filename().string()));
+      throw std::runtime_error(fmt::format("invalid tasks file format: \"{}\"", path.filename().u8string()));
   }
 
   // update variables
@@ -415,7 +415,7 @@ int main(int argc, char** argv)
     // check arguments validity
     if (!std::filesystem::exists(tasks_file) ||
         tasks_file.extension().string() != ".json")
-      throw std::runtime_error(fmt::format("the tasks file is invalid: \"{}\"", tasks_file.filename().string()));
+      throw std::runtime_error(fmt::format("the tasks file is invalid: \"{}\"", tasks_file.filename().u8string()));
 
     // parse command-line options
     std::map<std::string, std::string> cmd_vars;
