@@ -22,7 +22,6 @@ set_target_properties(${TARGET_EXE} PROPERTIES OUTPUT_NAME ${TARGET_NAME})
 
 # list of required third-party libraries
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(indicators CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(winpp CONFIG REQUIRED)
 
@@ -54,7 +53,6 @@ target_link_directories(${TARGET_EXE}
 target_link_libraries(${TARGET_EXE}
   PRIVATE
     nlohmann_json::nlohmann_json
-    indicators::indicators
     fmt::fmt-header-only
     winpp::winpp)
 

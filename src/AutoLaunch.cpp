@@ -16,6 +16,7 @@
 #include <winpp/console.hpp>
 #include <winpp/parser.hpp>
 #include <winpp/win.hpp>
+#include <winpp/system-mutex.hpp>
 #include <nlohmann/json.hpp>
 using json = nlohmann::ordered_json;
 
@@ -24,7 +25,7 @@ using json = nlohmann::ordered_json;
 ==============================================*/
 // program version
 const std::string PROGRAM_NAME = "AutoLaunch";
-const std::string PROGRAM_VERSION = "1.0";
+const std::string PROGRAM_VERSION = "1.2";
 
 // default length in characters to align status 
 constexpr std::size_t g_status_len = 80;
@@ -163,7 +164,7 @@ const std::string update_var(const std::string& str,
 };
 
 // parse command-line option as key:value
-std::map<std::string, std::string> parse_variables(const std::vector<std::string>& vars)
+std::map<std::string, std::string> parse_cmd(const std::vector<std::string>& vars)
 {
   auto split = [](const std::string& str) -> std::pair<std::string, std::string> {
     std::size_t pos = str.find(':');
@@ -228,13 +229,14 @@ std::pair<json, std::map<std::string, std::string>> parse_json(const std::filesy
 }
 
 // execute one task - blocking
-const std::string execute_task(const std::string& cmd,
-                               const std::string& args,
-                               const bool display,
-                               const bool ignore_error)
+void execute_task(const std::string& cmd,
+                  const std::string& args,
+                  std::string& logs,
+                  const bool display,
+                  const bool ignore_error)
 {
   // define callback for logs
-  std::string logs;
+  logs.clear();
   auto cb_logs = [&logs, display](const std::string& l) -> void {
     if (display)
       fmt::print(l);
@@ -264,8 +266,6 @@ const std::string execute_task(const std::string& cmd,
   cv.wait(lock, [&stopped]{ return stopped; });
   if (!ignore_error && exit_code != 0)
     throw std::runtime_error(fmt::format("process failed with error: {}", exit_code));
-
-  return logs;
 }
 
 // execute all the json tasks
@@ -274,28 +274,30 @@ void execute_tasks(const json& tasks,
                    bool interactive)
 {
   // detect global flags
-  bool debug_flag = false;
+  bool cmd_debug_flag = false;
   if (vars.find("debug") != vars.end())
-    debug_flag = (vars["debug"] == "true");
-  bool ask_execute_flag = false;
+    cmd_debug_flag = (vars["debug"] == "true");
+  bool cmd_ask_execute_flag = false;
   if (vars.find("ask-execute") != vars.end())
-    ask_execute_flag = (vars["ask-execute"] == "true");
+    cmd_ask_execute_flag = (vars["ask-execute"] == "true");
 
   // execute all tasks
   for (const auto& task : tasks)
   {
     // read task execution flags
-    const bool display = task.contains("display") ? task["display"].get<bool>() : false;
-    const bool debug =  task.contains("debug") ? task["debug"].get<bool>() : debug_flag;
-    const bool ignore_error = task.contains("ignore-error") ? task["ignore-error"] : false;
-    const bool ask_execute = task.contains("ask-execute") ? task["ask-execute"].get<bool>() : ask_execute_flag;
- 
+    const bool display_flag = task.contains("display") ? task["display"].get<bool>() : false;
+    const bool debug_flag =  task.contains("debug") ? task["debug"].get<bool>() : cmd_debug_flag;
+    const bool ignore_error_flag = task.contains("ignore-error") ? task["ignore-error"].get<bool>() : false;
+    const bool ask_execute_flag = task.contains("ask-execute") ? task["ask-execute"].get<bool>() : cmd_ask_execute_flag;
+    const bool ask_continue_flag = task.contains("ask-continue") ? task["ask-continue"].get<bool>() : false;
+    const bool protected_flag = task.contains("protected") ? task["protected"].get<bool>() : false;
+
     // read task parameters
     const std::string& desc = fmt::format("\"{}\"", update_var(task["description"].get<std::string>(), vars));
     const std::string& cmd = update_var(task["cmd"].get<std::string>(), vars);
     const std::string& args = update_var(task["args"].get<std::string>(), vars);
 
-    if (debug)
+    if (debug_flag)
     {
       // display generated task command-line
       fmt::print("{} {}\n",
@@ -308,19 +310,29 @@ void execute_tasks(const json& tasks,
     else
     {
       // ask user if it's ok to execute this task
-      if (ask_execute_flag)
+      if (interactive && ask_execute_flag)
       {
         if (!win::ask_user(fmt::format("Do you want to execute the task: {}?", desc)))
           continue;
       }
 
+      std::string logs;
       try
       {
         // execute task
-        fmt::print("{} {:<80}",
-          fmt::format(fmt::emphasis::bold, "execute"),
-          fmt::format("{}{}", desc, display ? "\n" : ":"));
-        std::string logs = execute_task(cmd, args, display, ignore_error);
+        if (display_flag)
+          fmt::print("{} {}\n", fmt::format(fmt::emphasis::bold, "execute:"), desc);
+        else
+          fmt::print("{} {:<80}", fmt::format(fmt::emphasis::bold, "execute"), desc + ":");
+        if (protected_flag)
+        {
+          // acquire system wide mutex to avoid multiples executions in //
+          win::system_mutex mtx("Global\\AutoLaunchSystemMtx");
+          std::lock_guard<win::system_mutex> lock(mtx);
+          execute_task(cmd, args, logs, display_flag, ignore_error_flag);
+        }
+        else
+         execute_task(cmd, args, logs, display_flag, ignore_error_flag);
 
         // parse logs to add new variables
         if (task.contains("parse-variables"))
@@ -352,24 +364,25 @@ void execute_tasks(const json& tasks,
           }
         }
 
-        if (!display)
+        if (!display_flag)
           add_tag(fmt::color::green, "OK");
       }
       catch (const std::exception& ex)
       {
-        if (!display)
+        if (!display_flag)
+        {
           add_tag(fmt::color::red, "KO");
+          fmt::print(logs);
+        }
         throw ex;
       }
     }
 
     // ask user if it's ok to continue
-    if (interactive &&
-        task.contains("ask-continue") &&
-        task["ask-continue"].get<bool>())
+    if (interactive && ask_continue_flag)
     {
       if (!win::ask_user("Do you want to continue?"))
-        throw std::runtime_error("user doesn't want to continue");
+        throw std::runtime_error("stop requested");
     }
   }
 }
@@ -377,7 +390,7 @@ void execute_tasks(const json& tasks,
 int main(int argc, char** argv)
 {
   // initialize Windows console
-  console::init();
+  console::init(1280, 600);
 
   // register signal handler
   signal(SIGINT, exit_program);
@@ -396,6 +409,7 @@ int main(int argc, char** argv)
     return -1;
   }
 
+  int ret;
   try
   {
     // check arguments validity
@@ -405,13 +419,13 @@ int main(int argc, char** argv)
 
     // parse command-line options
     std::map<std::string, std::string> cmd_vars;
-    exec("parsing command-line variables", [&]() { cmd_vars = parse_variables(variables_str); });
+    exec("parsing command-line variables", [&]() { cmd_vars = parse_cmd(variables_str); });
     display_variables(cmd_vars);
 
     // parsing tasks json file
     json tasks_db;
     std::map<std::string, std::string> json_vars;
-    exec("parsing command-line variables", [&]() {
+    exec("parsing json-file variables", [&]() {
       const auto& [db, vars] = parse_json(tasks_file, cmd_vars);
       tasks_db = db;
       json_vars = vars;
@@ -428,13 +442,19 @@ int main(int argc, char** argv)
       fmt::format(fmt::emphasis::bold, "Starting:"), 
       update_var(tasks_db["description"].get<std::string>(), vars)));
     execute_tasks(tasks_db["tasks"], vars, interactive);
-    return 0;
+    ret = 0;
   }
   catch (const std::exception& ex)
   {
     fmt::print("{} {}\n",
       fmt::format(fmt::fg(fmt::color::red) | fmt::emphasis::bold, "error:"),
       ex.what());
-    return -1;
+    ret = -1;
   }
+
+  // prompt user to terminate the program
+  if (interactive)
+    system("pause");
+
+  return ret;
 }
