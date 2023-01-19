@@ -1,0 +1,37 @@
+{
+  "description": "Complete set of tasks to compress directory with ${dir}",
+  "variables": [
+    {"7-zip": "$[C:\\Program Files\\7-Zip\\7z.exe]"}
+  ],
+  "tasks": [
+    {
+      "description": "list all files and directories in ${dir}",
+      "cmd": "powershell.exe",
+      "args": "ls ${dir}",
+      "parse-variables": [
+        {"filter-dir": "[0-9]* (WindowsPower[^ ]*)"}
+      ],
+      "variables": [
+        {"input-dir": "$[${dir}/${filter-dir}]"}
+      ],
+      "ask-continue": true
+    },
+    {
+      "description": "get current date to format log file",
+      "cmd": "powershell.exe",
+      "args": "-Command \"Get-Date -Format 'yyyy-MM-dd HH-mm-ss'\"",
+      "parse-variables": [
+        {"current-date": "([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}-[0-9]{2}-[0-9]{2})"}
+      ],
+      "variables": [
+        {"archive": "$[archive - ${current-date}.zip]"}
+      ]
+    },
+    {
+      "description": "compress directory: ${input-dir} with 7z",
+      "cmd": "${7-zip}",
+      "args": "a ${archive} ${input-dir}",
+      "display": true
+    }
+  ]
+}
