@@ -25,7 +25,7 @@ using json = nlohmann::ordered_json;
 ==============================================*/
 // program version
 const std::string PROGRAM_NAME = "AutoLaunch";
-const std::string PROGRAM_VERSION = "1.3";
+const std::string PROGRAM_VERSION = "1.3.1";
 
 // default length in characters to align status 
 constexpr std::size_t g_status_len = 80;
@@ -239,7 +239,7 @@ void execute_task(const std::string& cmd,
   logs.clear();
   auto cb_logs = [&logs, display](const std::string& l) -> void {
     if (display)
-      fmt::print(l);
+      fmt::print("{}", l);
     logs += l;
   };
 
@@ -369,12 +369,15 @@ void execute_tasks(const json& tasks,
       }
       catch (const std::exception& ex)
       {
+        std::exception err = ex;
         if (!display_flag)
         {
           add_tag(fmt::color::red, "KO");
-          fmt::print(logs);
+          err = std::runtime_error(fmt::format("{}\n\n{}", ex.what(), logs));
         }
-        throw ex;
+        else
+          fmt::print("\n");
+        throw err;
       }
     }
 
