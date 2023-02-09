@@ -8,7 +8,6 @@
 #include <condition_variable>
 #include <mutex>
 #include <chrono>
-#include <conio.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <fmt/core.h>
@@ -312,7 +311,7 @@ void execute_tasks(const json& tasks,
       // ask user if it's ok to execute this task
       if (interactive && ask_execute_flag)
       {
-        if (!win::ask_user(fmt::format("Do you want to execute the task: {}?", desc)))
+        if (!console::ask_user(fmt::format("Do you want to execute the task: {}?", desc)))
           continue;
       }
 
@@ -384,7 +383,7 @@ void execute_tasks(const json& tasks,
     // ask user if it's ok to continue
     if (interactive && ask_continue_flag)
     {
-      if (!win::ask_user("Do you want to continue?"))
+      if (!console::ask_user("Do you want to continue?"))
         throw std::runtime_error("stop requested");
     }
   }
