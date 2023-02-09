@@ -2,7 +2,7 @@
     "name": "autolaunch",
     "version": "1.3.1",
     "dependencies": [
-        "nlohmann-json",
-        "winpp"
+      "nlohmann-json",
+      "winpp"
     ]
 }

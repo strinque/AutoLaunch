@@ -21,8 +21,8 @@ add_executable(${TARGET_EXE} ${SOURCE_FILES} ${HEADER_FILES} ${RESOURCE_FILES})
 set_target_properties(${TARGET_EXE} PROPERTIES OUTPUT_NAME ${TARGET_NAME})
 
 # list of required third-party libraries
-find_package(nlohmann_json CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 find_package(winpp CONFIG REQUIRED)
 
 # set project compile definitions
@@ -35,6 +35,7 @@ add_compile_options($<$<C_COMPILER_ID:MSVC>:/utf-8>)
 add_compile_options($<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
 # generic configuration
+get_filename_component(BUILD_DIRECTORY ${CMAKE_BINARY_DIR} DIRECTORY)
 string(CONCAT CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded"
   $<$<CONFIG:Debug>:DebugDLL>
   $<$<NOT:$<CONFIG:Debug>>:DLL>)
@@ -52,34 +53,22 @@ target_link_directories(${TARGET_EXE}
     ${BUILD_PREFIX_PATH}/lib)
 target_link_libraries(${TARGET_EXE}
   PRIVATE
-    nlohmann_json::nlohmann_json
     fmt::fmt-header-only
+    nlohmann_json::nlohmann_json
     winpp::winpp)
 
 # compress executable using upx
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
-  if(EXISTS ${CMAKE_INSTALL_PREFIX}/bin/upx.exe)
+  if(EXISTS ${BUILD_DIRECTORY}/upx.exe)
     add_custom_command(
       TARGET ${TARGET_EXE} POST_BUILD 
-      COMMAND ${CMAKE_INSTALL_PREFIX}/bin/upx.exe -9q $<TARGET_FILE:${TARGET_EXE}>)
+      COMMAND ${BUILD_DIRECTORY}/upx.exe -9q $<TARGET_FILE:${TARGET_EXE}>)
   endif()
 endif()
 
 # install executable
 install(TARGETS ${TARGET_EXE} EXPORT ${TARGET_EXE}Config
   RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
-
-# install executable dependencies
-install(CODE [[
-    file(GET_RUNTIME_DEPENDENCIES 
-        DIRECTORIES ${BUILD_PREFIX_PATH}/bin
-        PRE_EXCLUDE_REGEXES "api-ms-*"
-        POST_EXCLUDE_REGEXES ".*system32/.*\\.dll"
-        RESOLVED_DEPENDENCIES_VAR deps
-        EXECUTABLES ${CMAKE_ABSOLUTE_DESTINATION_FILES})
-    message(STATUS ${deps})
-    file(INSTALL DESTINATION ${CMAKE_INSTALL_PREFIX}/bin TYPE EXECUTABLE FILES ${deps})
-]])
 
 # organize files for visual-studio
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
