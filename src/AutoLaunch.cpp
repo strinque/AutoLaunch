@@ -24,7 +24,7 @@ using json = nlohmann::ordered_json;
 ==============================================*/
 // program version
 const std::string PROGRAM_NAME = "AutoLaunch";
-const std::string PROGRAM_VERSION = "1.3.1";
+const std::string PROGRAM_VERSION = "1.3.2";
 
 // default length in characters to align status 
 constexpr std::size_t g_status_len = 80;
