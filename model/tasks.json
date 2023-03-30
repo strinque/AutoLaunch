@@ -31,7 +31,8 @@
       "description": "compress directory: ${input-dir} with 7z",
       "cmd": "${7-zip}",
       "args": "a ${archive} ${input-dir}",
-      "display": true
+      "display": true,
+      "timeout": 1.5
     }
   ]
 }

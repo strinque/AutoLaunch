@@ -14,7 +14,7 @@ It uses the `winpp` header-only library from: https://github.com/strinque/winpp.
 - [x] handle command-line argument variables
 - [x] handle defined variables in tasks.json file
 - [x] handle variables that can be parsed from the output of an executable using regex
-- [x] handle a list of task flags such as `debug`, `display`, `ask-execute`, `ask-continue`, `ignore-error`, `protect`
+- [x] handle a list of task flags [`debug`, `display`, `ask-execute`, `ask-continue`, `ignore-error`, `timeout`, `protect`]
 
 ## Usage
 
@@ -64,7 +64,8 @@ AutoLaunch.exe --tasks tasks.json \
       "description": "compress directory: ${input-dir} with 7z",
       "cmd": "${7-zip}",
       "args": "a ${archive} ${input-dir}",
-      "display": true
+      "display": true,
+      "timeout": 1.5
     }
   ]
 }
@@ -82,6 +83,7 @@ Several optional flags can be defined for each task:
 - `ignore-error`: ignore program return code (when program is expected to fail in particular conditions)
 - `protected`: these task use a shared resource and should be protected (executed only one at a time between all **AutoLaunch** instances)
 - `display`: display the program output
+- `timeout`: the task will be stopped after this timeout (in seconds)
 
 ### Variables
 

@@ -24,7 +24,7 @@ using json = nlohmann::ordered_json;
 ==============================================*/
 // program version
 const std::string PROGRAM_NAME = "AutoLaunch";
-const std::string PROGRAM_VERSION = "1.3.2";
+const std::string PROGRAM_VERSION = "1.3.3";
 
 // default length in characters to align status 
 constexpr std::size_t g_status_len = 80;
@@ -232,7 +232,8 @@ void execute_task(const std::string& cmd,
                   const std::string& args,
                   std::string& logs,
                   const bool display,
-                  const bool ignore_error)
+                  const bool ignore_error,
+                  float timeout)
 {
   // define callback for logs
   logs.clear();
@@ -257,6 +258,8 @@ void execute_task(const std::string& cmd,
   win::async_process process;
   process.set_default_error_code(-1);
   process.set_working_dir(std::filesystem::current_path());
+  if (timeout)
+    process.set_timeout(std::chrono::milliseconds(static_cast<std::size_t>(timeout * 1000)));
   if (!process.execute(fmt::format("{} {}", cmd, args), cb_logs, cb_exit))
     throw std::runtime_error("can't start process");
 
@@ -290,6 +293,7 @@ void execute_tasks(const json& tasks,
     const bool ask_execute_flag = task.contains("ask-execute") ? task["ask-execute"].get<bool>() : cmd_ask_execute_flag;
     const bool ask_continue_flag = task.contains("ask-continue") ? task["ask-continue"].get<bool>() : false;
     const bool protected_flag = task.contains("protected") ? task["protected"].get<bool>() : false;
+    const float timeout = task.contains("timeout") ? task["timeout"].get<float>() : 0;
 
     // read task parameters
     const std::string& desc = fmt::format("\"{}\"", update_var(task["description"].get<std::string>(), vars));
@@ -328,10 +332,10 @@ void execute_tasks(const json& tasks,
           // acquire system wide mutex to avoid multiples executions in //
           win::system_mutex mtx("Global\\AutoLaunchSystemMtx");
           std::lock_guard<win::system_mutex> lock(mtx);
-          execute_task(cmd, args, logs, display_flag, ignore_error_flag);
+          execute_task(cmd, args, logs, display_flag, ignore_error_flag, timeout);
         }
         else
-         execute_task(cmd, args, logs, display_flag, ignore_error_flag);
+         execute_task(cmd, args, logs, display_flag, ignore_error_flag, timeout);
 
         // parse logs to add new variables
         if (task.contains("parse-variables"))
