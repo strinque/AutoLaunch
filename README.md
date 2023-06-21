@@ -14,7 +14,7 @@ It uses the `winpp` header-only library from: https://github.com/strinque/winpp.
 - [x] handle command-line argument variables
 - [x] handle defined variables in tasks.json file
 - [x] handle variables that can be parsed from the output of an executable using regex
-- [x] handle a list of task flags [`debug`, `display`, `ask-execute`, `ask-continue`, `ignore-error`, `timeout`, `protect`]
+- [x] handle a list of task flags [`debug`, `display`, `ask-execute`, `ask-continue`, `ignore-error`, `timeout`, `protected`]
 
 ## Usage
 
@@ -75,13 +75,13 @@ AutoLaunch.exe --tasks tasks.json \
 
 ### Task flags
 
-Several optional flags can be defined for each task: 
+Several optional flags can be defined for each task (overwrite the command-line flags): 
 
-- `debug`: don't execute the task, only display the generated command-line for debugging (overwrites the command-line `debug` value)
-- `ask-execute`: prompt user if this task needs to be executed (overwrites the command-line `ask-execute` value)
+- `debug`: don't execute the task, only display the generated command-line for debugging
+- `ask-execute`: prompt user if this task needs to be executed
 - `ask-continue`: prompt user if the program should continue after this step
 - `ignore-error`: ignore program return code (when program is expected to fail in particular conditions)
-- `protected`: these task use a shared resource and should be protected (executed only one at a time between all **AutoLaunch** instances)
+- `protected`: this task use a shared resource and should be protected (executed only one at a time between all **AutoLaunch** instances)
 - `display`: display the program output
 - `timeout`: the task will be stopped after this timeout (in seconds)
 
@@ -136,17 +136,17 @@ Another replacement method has been implemented which replaces path by their abs
 It's also possible to create `variables` by parsing the output of the task execution and using regex to determine their values.
 
 ```json
-    {
-      "description": "get current date to format log file",
-      "cmd": "powershell.exe",
-      "args": "-Command \"Get-Date -Format 'yyyy-MM-dd HH-mm-ss'\"",
-      "parse-variables": [
-        {"current-date": "([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}-[0-9]{2}-[0-9]{2})"}
-      ],
-      "variables": [
-        {"archive": "$[archive - ${current-date}.zip]"}
-      ]
-    }
+{
+  "description": "get current date to format log file",
+  "cmd": "powershell.exe",
+  "args": "-Command \"Get-Date -Format 'yyyy-MM-dd HH-mm-ss'\"",
+  "parse-variables": [
+    {"current-date": "([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}-[0-9]{2}-[0-9]{2})"}
+  ],
+  "variables": [
+    {"archive": "$[archive - ${current-date}.zip]"}
+  ]
+}
 ```
 
 ## Requirements

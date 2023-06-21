@@ -24,7 +24,7 @@ using json = nlohmann::ordered_json;
 ==============================================*/
 // program version
 const std::string PROGRAM_NAME = "AutoLaunch";
-const std::string PROGRAM_VERSION = "1.3.3";
+const std::string PROGRAM_VERSION = "1.4.0";
 
 // default length in characters to align status 
 constexpr std::size_t g_status_len = 80;
@@ -233,7 +233,7 @@ void execute_task(const std::string& cmd,
                   std::string& logs,
                   const bool display,
                   const bool ignore_error,
-                  float timeout)
+                  const std::chrono::milliseconds& timeout)
 {
   // define callback for logs
   logs.clear();
@@ -247,8 +247,8 @@ void execute_task(const std::string& cmd,
   std::mutex mtx;
   std::condition_variable cv;
   int exit_code = 0;
-  bool stopped = false;
-  auto cb_exit = [&exit_code, &stopped, &cv](const int ret) -> void {
+  volatile bool stopped = false;
+  auto cb_exit = [&](const int ret) -> void {
     exit_code = ret;
     stopped = true;
     cv.notify_all();
@@ -258,14 +258,14 @@ void execute_task(const std::string& cmd,
   win::async_process process;
   process.set_default_error_code(-1);
   process.set_working_dir(std::filesystem::current_path());
-  if (timeout)
-    process.set_timeout(std::chrono::milliseconds(static_cast<std::size_t>(timeout * 1000)));
+  if (timeout.count())
+    process.set_timeout(timeout);
   if (!process.execute(fmt::format("{} {}", cmd, args), cb_logs, cb_exit))
     throw std::runtime_error("can't start process");
 
   // wait for process to terminate
   std::unique_lock<std::mutex> lock(mtx);
-  cv.wait(lock, [&stopped]{ return stopped; });
+  cv.wait(lock, [&]{ return stopped; });
   if (!ignore_error && exit_code != 0)
     throw std::runtime_error(fmt::format("process failed with error: {}", exit_code));
 }
@@ -275,25 +275,22 @@ void execute_tasks(const json& tasks,
                    std::map<std::string, std::string>& vars,
                    bool interactive)
 {
-  // detect global flags
-  bool cmd_debug_flag = false;
-  if (vars.find("debug") != vars.end())
-    cmd_debug_flag = (vars["debug"] == "true");
-  bool cmd_ask_execute_flag = false;
-  if (vars.find("ask-execute") != vars.end())
-    cmd_ask_execute_flag = (vars["ask-execute"] == "true");
+  // lambda helpers
+  auto get_bool_value = [=](const std::string& key) -> bool { return (vars.find(key) != vars.end()) ? (vars.at(key) == "true") : false; };
+  auto get_float_value = [=](const std::string& key) -> float { return (vars.find(key) != vars.end()) ? std::stof(vars.at(key)) : 0.0f; };
+  auto to_milliseconds = [](const float timeout) -> std::chrono::milliseconds { return std::chrono::milliseconds(static_cast<std::size_t>(timeout * 1000)); };
 
   // execute all tasks
   for (const auto& task : tasks)
   {
     // read task execution flags
-    const bool display_flag = task.contains("display") ? task["display"].get<bool>() : false;
-    const bool debug_flag =  task.contains("debug") ? task["debug"].get<bool>() : cmd_debug_flag;
-    const bool ignore_error_flag = task.contains("ignore-error") ? task["ignore-error"].get<bool>() : false;
-    const bool ask_execute_flag = task.contains("ask-execute") ? task["ask-execute"].get<bool>() : cmd_ask_execute_flag;
-    const bool ask_continue_flag = task.contains("ask-continue") ? task["ask-continue"].get<bool>() : false;
-    const bool protected_flag = task.contains("protected") ? task["protected"].get<bool>() : false;
-    const float timeout = task.contains("timeout") ? task["timeout"].get<float>() : 0;
+    const bool display_flag       = task.contains("display") ?      task["display"].get<bool>()       : get_bool_value("display");
+    const bool debug_flag         = task.contains("debug") ?        task["debug"].get<bool>()         : get_bool_value("debug");
+    const bool ignore_error_flag  = task.contains("ignore-error") ? task["ignore-error"].get<bool>()  : get_bool_value("ignore-error");
+    const bool ask_execute_flag   = task.contains("ask-execute") ?  task["ask-execute"].get<bool>()   : get_bool_value("ask-execute");
+    const bool ask_continue_flag  = task.contains("ask-continue") ? task["ask-continue"].get<bool>()  : get_bool_value("ask-continue");
+    const bool protected_flag     = task.contains("protected") ?    task["protected"].get<bool>()     : get_bool_value("protected");
+    const std::chrono::milliseconds timeout = to_milliseconds(task.contains("timeout") ? task["timeout"].get<float>() : get_float_value("timeout"));
 
     // read task parameters
     const std::string& desc = fmt::format("\"{}\"", update_var(task["description"].get<std::string>(), vars));
