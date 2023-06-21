@@ -24,7 +24,7 @@ using json = nlohmann::ordered_json;
 ==============================================*/
 // program version
 const std::string PROGRAM_NAME = "AutoLaunch";
-const std::string PROGRAM_VERSION = "1.4.0";
+const std::string PROGRAM_VERSION = "1.4.1";
 
 // default length in characters to align status 
 constexpr std::size_t g_status_len = 80;
@@ -196,19 +196,24 @@ std::pair<json, std::map<std::string, std::string>> parse_json(const std::filesy
   std::ifstream file(path);
   if (!file.good())
     throw std::runtime_error(fmt::format("can't open file: \"{}\"", path.filename().u8string()));
-  json db = json::parse(file);
+  const json& db = json::parse(file);
 
   // check json format
-  if(!db.contains("description") ||
-     !db.contains("variables") ||
-     !db.contains("tasks"))
+  if((!db.contains("description")  || !db["description"].is_string()) ||
+     (!db.contains("variables")    || !db["variables"].is_array())    ||
+     (!db.contains("tasks-groups") || !db["tasks-groups"].is_array()))
     throw std::runtime_error(fmt::format("invalid tasks file format: \"{}\"", path.filename().u8string()));
-  for (const auto& t : db["tasks"])
+  for (const auto& tasks_groups : db["tasks-groups"])
   {
-    if (!t.contains("description") ||
-        !t.contains("cmd") ||
-        !t.contains("args"))
+    if((!tasks_groups.contains("tasks") || !tasks_groups["tasks"].is_array()))
       throw std::runtime_error(fmt::format("invalid tasks file format: \"{}\"", path.filename().u8string()));
+    for (const auto& task : tasks_groups["tasks"])
+    {
+      if (!task.contains("description") ||
+          !task.contains("cmd") ||
+          !task.contains("args"))
+        throw std::runtime_error(fmt::format("invalid tasks file format: \"{}\"", path.filename().u8string()));
+    }
   }
 
   // update variables
@@ -271,123 +276,167 @@ void execute_task(const std::string& cmd,
 }
 
 // execute all the json tasks
-void execute_tasks(const json& tasks,
+void execute_tasks(const json& tasks_groups,
                    std::map<std::string, std::string>& vars,
                    bool interactive)
 {
   // lambda helpers
-  auto get_bool_value = [=](const std::string& key) -> bool { return (vars.find(key) != vars.end()) ? (vars.at(key) == "true") : false; };
-  auto get_float_value = [=](const std::string& key) -> float { return (vars.find(key) != vars.end()) ? std::stof(vars.at(key)) : 0.0f; };
-  auto to_milliseconds = [](const float timeout) -> std::chrono::milliseconds { return std::chrono::milliseconds(static_cast<std::size_t>(timeout * 1000)); };
+  auto get_bool_value = [=](const json& obj, const std::string& key) -> bool {
+    if (obj.contains("flags") && obj["flags"].is_object())
+      if (obj["flags"].contains(key) && obj["flags"][key].is_boolean())
+        return obj["flags"][key].get<bool>();    
+    return (vars.find(key) != vars.end()) ? (vars.at(key) == "true") : false; 
+  };
+  auto get_float_value = [=](const json& obj, const std::string& key) -> float { 
+    if (obj.contains("flags") && obj["flags"].is_object())
+      if (obj["flags"].contains(key) && obj["flags"][key].is_number_float())
+        return obj["flags"][key].get<float>();
+    return (vars.find(key) != vars.end()) ? std::stof(vars.at(key)) : 0.0f; 
+  };
+  auto to_ms = [](const float timeout) -> std::chrono::milliseconds { 
+    return std::chrono::milliseconds(static_cast<std::size_t>(1000.0 * timeout)); 
+  };
 
-  // execute all tasks
-  for (const auto& task : tasks)
+  // declare system wide mutex to avoid executing tasks in parallel - not locked by default
+  win::system_mutex mtx("Global\\AutoLaunchSystemMtx");
+  std::unique_lock<win::system_mutex> lck(mtx, std::defer_lock);
+  auto lock = [&]() -> void { if (!lck.owns_lock()) lck.lock(); };
+  auto unlock = [&]() -> void { if (lck.owns_lock()) lck.unlock(); };
+
+  // lock the whole process if "protected" command-line option is set
+  const bool cmd_protected = ((vars.find("protected") != vars.end()) &&
+                              (vars["protected"] == "true"));
+  if (cmd_protected)
+    lock();
+
+  // execute all grouped tasks
+  for (const auto& tasks_group : tasks_groups)
   {
-    // read task execution flags
-    const bool display_flag       = task.contains("display") ?      task["display"].get<bool>()       : get_bool_value("display");
-    const bool debug_flag         = task.contains("debug") ?        task["debug"].get<bool>()         : get_bool_value("debug");
-    const bool ignore_error_flag  = task.contains("ignore-error") ? task["ignore-error"].get<bool>()  : get_bool_value("ignore-error");
-    const bool ask_execute_flag   = task.contains("ask-execute") ?  task["ask-execute"].get<bool>()   : get_bool_value("ask-execute");
-    const bool ask_continue_flag  = task.contains("ask-continue") ? task["ask-continue"].get<bool>()  : get_bool_value("ask-continue");
-    const bool protected_flag     = task.contains("protected") ?    task["protected"].get<bool>()     : get_bool_value("protected");
-    const std::chrono::milliseconds timeout = to_milliseconds(task.contains("timeout") ? task["timeout"].get<float>() : get_float_value("timeout"));
+    // lock the group of tasks if "protected" group flag is set
+    const bool group_protected = (tasks_group.contains("flags") && tasks_group["flags"].is_object()) &&
+                                 (tasks_group["flags"].contains("protected") && tasks_group["flags"]["protected"].is_boolean()) &&
+                                 (tasks_group["flags"]["protected"].get<bool>());
+    if (!cmd_protected && group_protected)
+      lock();
 
-    // read task parameters
-    const std::string& desc = fmt::format("\"{}\"", update_var(task["description"].get<std::string>(), vars));
-    const std::string& cmd = update_var(task["cmd"].get<std::string>(), vars);
-    const std::string& args = update_var(task["args"].get<std::string>(), vars);
+    // execute all tasks of this group
+    for (const auto& task : tasks_group["tasks"])
+    {
+      // lock the task if "protected" task flag is set
+      const bool task_protected = (task.contains("protected") && task["protected"].is_boolean()) &&
+                                  (task["protected"].get<bool>());
+      if (!cmd_protected && !group_protected && task_protected)
+        lock();
 
-    if (debug_flag)
-    {
-      // display generated task command-line
-      fmt::print("{} {}\n",
-        fmt::format(fmt::emphasis::bold, "debugging task:"),
-        desc);
-      fmt::print("{} [{}]\n",
-        fmt::format(fmt::emphasis::bold, "task-cmd:"),
-        fmt::format("{} {}", cmd, args));
-    }
-    else
-    {
-      // ask user if it's ok to execute this task
-      if (interactive && ask_execute_flag)
+      // read task execution flags - by order: task/group/command-line - default: false or 0.0f
+      const bool display_flag =                       task.contains("display") ?      task["display"]     .get<bool>()  : get_bool_value(tasks_group, "display");
+      const bool debug_flag =                         task.contains("debug") ?        task["debug"]       .get<bool>()  : get_bool_value(tasks_group, "debug");
+      const bool ignore_error_flag =                  task.contains("ignore-error") ? task["ignore-error"].get<bool>()  : get_bool_value(tasks_group, "ignore-error");
+      const bool ask_execute_flag =                   task.contains("ask-execute") ?  task["ask-execute"] .get<bool>()  : get_bool_value(tasks_group, "ask-execute");
+      const bool ask_continue_flag =                  task.contains("ask-continue") ? task["ask-continue"].get<bool>()  : get_bool_value(tasks_group, "ask-continue");
+      const std::chrono::milliseconds timeout = to_ms(task.contains("timeout") ?      task["timeout"]     .get<float>() : get_float_value(tasks_group, "timeout"));
+
+      // read task parameters
+      const std::string& desc = fmt::format("\"{}\"", update_var(task["description"].get<std::string>(), vars));
+      const std::string& cmd = update_var(task["cmd"].get<std::string>(), vars);
+      const std::string& args = update_var(task["args"].get<std::string>(), vars);
+
+      if (debug_flag)
       {
-        if (!console::ask_user(fmt::format("Do you want to execute the task: {}?", desc)))
-          continue;
+        // display generated task command-line
+        fmt::print("{} {}\n",
+          fmt::format(fmt::emphasis::bold, "debugging task:"),
+          desc);
+        fmt::print("{} [{}]\n",
+          fmt::format(fmt::emphasis::bold, "task-cmd:"),
+          fmt::format("{} {}", cmd, args));
       }
-
-      std::string logs;
-      try
+      else
       {
-        // execute task
-        if (display_flag)
-          fmt::print("{} {}\n", fmt::format(fmt::emphasis::bold, "execute:"), desc);
-        else
-          fmt::print("{} {:<80}", fmt::format(fmt::emphasis::bold, "execute"), desc + ":");
-        if (protected_flag)
+        // ask user if it's ok to execute this task
+        if (interactive && ask_execute_flag)
         {
-          // acquire system wide mutex to avoid multiples executions in //
-          win::system_mutex mtx("Global\\AutoLaunchSystemMtx");
-          std::lock_guard<win::system_mutex> lock(mtx);
-          execute_task(cmd, args, logs, display_flag, ignore_error_flag, timeout);
+          if (!console::ask_user(fmt::format("Do you want to execute the task: {}?", desc)))
+            continue;
         }
-        else
-         execute_task(cmd, args, logs, display_flag, ignore_error_flag, timeout);
 
-        // parse logs to add new variables
-        if (task.contains("parse-variables"))
+        std::string logs;
+        try
         {
-          // remove all new-lines
-          logs.erase(std::remove(logs.begin(), logs.end(), '\r'), logs.end());
-          logs.erase(std::remove(logs.begin(), logs.end(), '\n'), logs.end());
+          // execute task
+          if (display_flag)
+            fmt::print("{} {}\n", fmt::format(fmt::emphasis::bold, "execute:"), desc);
+          else
+            fmt::print("{} {:<80}", fmt::format(fmt::emphasis::bold, "execute"), desc + ":");
+          execute_task(cmd, args, logs, display_flag, ignore_error_flag, timeout);
 
-          // extract all variable using regex to find their values in the logs
-          for (const auto& var : task["parse-variables"])
+          // parse logs to add new variables
+          if (task.contains("parse-variables"))
           {
-            for (const auto& [key, value] : var.items())
+            // remove all new-lines
+            logs.erase(std::remove(logs.begin(), logs.end(), '\r'), logs.end());
+            logs.erase(std::remove(logs.begin(), logs.end(), '\n'), logs.end());
+
+            // extract all variable using regex to find their values in the logs
+            for (const auto& var : task["parse-variables"])
             {
-              std::smatch sm;
-              std::regex reg(value.get<std::string>());
-              if (std::regex_search(logs, sm, reg))
-                vars[key] = sm.str(1);
+              for (const auto& [key, value] : var.items())
+              {
+                std::smatch sm;
+                std::regex reg(value.get<std::string>());
+                if (std::regex_search(logs, sm, reg))
+                  vars[key] = sm.str(1);
+              }
             }
           }
-        }
 
-        // update variables
-        if (task.contains("variables"))
-        {
-          for (const auto& var : task["variables"])
+          // update variables
+          if (task.contains("variables"))
           {
-            for (const auto& [key, value] : var.items())
-              vars[key] = update_var(value.get<std::string>(), vars);
+            for (const auto& var : task["variables"])
+            {
+              for (const auto& [key, value] : var.items())
+                vars[key] = update_var(value.get<std::string>(), vars);
+            }
           }
-        }
 
-        if (!display_flag)
-          add_tag(fmt::color::green, "OK");
-      }
-      catch (const std::exception& ex)
-      {
-        std::exception err = ex;
-        if (!display_flag)
+          if (!display_flag)
+            add_tag(fmt::color::green, "OK");
+        }
+        catch (const std::exception& ex)
         {
-          add_tag(fmt::color::red, "KO");
-          err = std::runtime_error(fmt::format("{}\n\n{}", ex.what(), logs));
+          std::exception err = ex;
+          if (!display_flag)
+          {
+            add_tag(fmt::color::red, "KO");
+            err = std::runtime_error(fmt::format("{}\n\n{}", ex.what(), logs));
+          }
+          else
+            fmt::print("\n");
+          throw err;
         }
-        else
-          fmt::print("\n");
-        throw err;
+      }
+
+      // unlock the task if necessary
+      if (!cmd_protected && !group_protected && task_protected)
+        unlock();
+
+      // ask user if it's ok to continue
+      if (interactive && ask_continue_flag)
+      {
+        if (!console::ask_user("Do you want to continue?"))
+          throw std::runtime_error("stop requested");
       }
     }
 
-    // ask user if it's ok to continue
-    if (interactive && ask_continue_flag)
-    {
-      if (!console::ask_user("Do you want to continue?"))
-        throw std::runtime_error("stop requested");
-    }
+    // unlock the group of tasks if necessary
+    if (!cmd_protected && group_protected)
+      unlock();
   }
+
+  // unlock the whole process if necessary
+  if (cmd_protected)
+    unlock();
 }
 
 int main(int argc, char** argv)
@@ -428,7 +477,7 @@ int main(int argc, char** argv)
     // parsing tasks json file
     json tasks_db;
     std::map<std::string, std::string> json_vars;
-    exec("parsing json-file variables", [&]() {
+    exec("parsing json-file variables and check validity", [&]() {
       const auto& [db, vars] = parse_json(tasks_file, cmd_vars);
       tasks_db = db;
       json_vars = vars;
@@ -444,7 +493,7 @@ int main(int argc, char** argv)
     fmt::print(fmt::format("{} \"{}\"\n", 
       fmt::format(fmt::emphasis::bold, "Starting:"), 
       update_var(tasks_db["description"].get<std::string>(), vars)));
-    execute_tasks(tasks_db["tasks"], vars, interactive);
+    execute_tasks(tasks_db["tasks-groups"], vars, interactive);
     ret = 0;
   }
   catch (const std::exception& ex)
