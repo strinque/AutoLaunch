@@ -24,7 +24,7 @@ using json = nlohmann::ordered_json;
 ==============================================*/
 // program version
 const std::string PROGRAM_NAME = "AutoLaunch";
-const std::string PROGRAM_VERSION = "1.4.1";
+const std::string PROGRAM_VERSION = "1.4.2";
 
 // default length in characters to align status 
 constexpr std::size_t g_status_len = 80;
@@ -357,7 +357,11 @@ void execute_tasks(const json& tasks_groups,
         if (interactive && ask_execute_flag)
         {
           if (!console::ask_user(fmt::format("Do you want to execute the task: {}?", desc)))
+          {
+            if (!cmd_protected && !group_protected && task_protected)
+              unlock();
             continue;
+          }
         }
 
         std::string logs;
