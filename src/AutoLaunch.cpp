@@ -24,7 +24,7 @@ using json = nlohmann::ordered_json;
 ==============================================*/
 // program version
 const std::string PROGRAM_NAME = "AutoLaunch";
-const std::string PROGRAM_VERSION = "1.4.2";
+const std::string PROGRAM_VERSION = "1.4.3";
 
 // default length in characters to align status 
 constexpr std::size_t g_status_len = 80;
@@ -156,6 +156,7 @@ const std::string update_var(const std::string& str,
       else
         throw std::runtime_error(fmt::format("wrong pattern detected: \"{}\"", old_value));
       new_str = replace_string(new_str, old_value, quote + std::filesystem::absolute(std::filesystem::path(key)).string() + quote);
+      new_str = utf8::from_utf8(new_str);
     } while (true);
   }
 
@@ -349,7 +350,7 @@ void execute_tasks(const json& tasks_groups,
           desc);
         fmt::print("{} [{}]\n",
           fmt::format(fmt::emphasis::bold, "task-cmd:"),
-          fmt::format("{} {}", cmd, args));
+          fmt::format("{} {}", cmd, utf8::to_utf8(args)));
       }
       else
       {
