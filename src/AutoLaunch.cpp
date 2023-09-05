@@ -24,7 +24,7 @@ using json = nlohmann::ordered_json;
 ==============================================*/
 // program version
 const std::string PROGRAM_NAME = "AutoLaunch";
-const std::string PROGRAM_VERSION = "1.4.3";
+const std::string PROGRAM_VERSION = "1.4.4";
 
 // default length in characters to align status 
 constexpr std::size_t g_status_len = 80;
@@ -97,7 +97,7 @@ bool replace_vars(std::string& str,
 const std::string update_var(const std::string& str,
                              const std::map<std::string, std::string>& variables)
 {
-  // replace sub-string with pattern ${xxx, ' ', ' '} by their corresponding variable value
+  // replace sub-string with pattern ${xxx, 'x', 'y'} by their corresponding variable value
   std::string new_str = str;
   {
     std::regex replace_pattern(R"(\$\{([^,\}]+),[^']'(.)',[^']'(.)'\})");
@@ -111,7 +111,7 @@ const std::string update_var(const std::string& str,
       const char old_char = rit->str(2).at(0);
       const char new_char = rit->str(3).at(0);
       if (!replace_vars(new_str, variables, old_value, key, old_char, new_char))
-        break;
+        throw std::runtime_error(fmt::format("missing variable: ${{{}}}", key));
     } while (true);
   }
 
@@ -126,7 +126,7 @@ const std::string update_var(const std::string& str,
       const std::string old_value = rit->str(0);
       const std::string key = rit->str(1);
       if (!replace_vars(new_str, variables, old_value, key))
-        break;
+        throw std::runtime_error(fmt::format("missing variable: ${{{}}}", key));
     } while (true);
   }
 
@@ -207,13 +207,13 @@ std::pair<json, std::map<std::string, std::string>> parse_json(const std::filesy
   for (const auto& tasks_groups : db["tasks-groups"])
   {
     if((!tasks_groups.contains("tasks") || !tasks_groups["tasks"].is_array()))
-      throw std::runtime_error(fmt::format("invalid tasks file format: \"{}\"", path.filename().u8string()));
+      throw std::runtime_error(fmt::format("invalid tasks file format: \"{}\" (incorrect tasks group format)", path.filename().u8string()));
     for (const auto& task : tasks_groups["tasks"])
     {
-      if (!task.contains("description") ||
-          !task.contains("cmd") ||
-          !task.contains("args"))
-        throw std::runtime_error(fmt::format("invalid tasks file format: \"{}\"", path.filename().u8string()));
+      if ((!task.contains("description") || !task["description"].is_string()) ||
+          (!task.contains("cmd")         || !task["cmd"].is_string())         ||
+          (!task.contains("args")        || !task["args"].is_string()))
+        throw std::runtime_error(fmt::format("invalid tasks file format: \"{}\" (incorrect task format)", path.filename().u8string()));
     }
   }
 
